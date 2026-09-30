@@ -2,13 +2,14 @@
 //  CONFIGURACIÓN: pega aquí los datos de tu proyecto Firebase
 //  (Consola de Firebase > Configuración del proyecto > Tus apps > App web)
 // ============================================================
+
 export const firebaseConfig = {
-  apiKey: "PEGAR_AQUI",
-  authDomain: "PEGAR_AQUI.firebaseapp.com",
-  projectId: "PEGAR_AQUI",
-  storageBucket: "PEGAR_AQUI.appspot.com",
-  messagingSenderId: "PEGAR_AQUI",
-  appId: "PEGAR_AQUI",
+  apiKey: "AIzaSyC-fMI9i3cKUAoXkCuFJ625qvj7NXyCTxE",
+  authDomain: "surplus-f8ce5.firebaseapp.com",
+  projectId: "surplus-f8ce5",
+  storageBucket: "surplus-f8ce5.firebasestorage.app",
+  messagingSenderId: "732493298045",
+  appId: "1:732493298045:web:a89f3aaef8ac74f6a37414"
 };
 
 // El usuario escribe "cvalmacen3" y por dentro se inicia sesión como
