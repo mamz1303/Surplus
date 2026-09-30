@@ -41,9 +41,32 @@
       <span><b>Agregar solo materiales nuevos</b><small>Los códigos que ya existen no se tocan: se conserva su stock, ubicación y conteo.</small></span></label>
     <label class="opcion"><input type="radio" name="modo" value="inicial">
       <span><b>Carga inicial: borrar todo y cargar este archivo</b><small>Borra materiales, despachos y conteos registrados en la app. Úsalo solo la primera vez.</small></span></label>
-    <label class="opcion" id="op-hist"><input type="checkbox" id="con-historial" checked>
+    <label class="opcion" id="op-hist"><input type="checkbox" id="con-historial">
       <span><b>Incluir historial de despachos</b><small>Hoja DESCARGAR DESPACHO. Queda como registro; no vuelve a descontar stock porque SALDO ya lo incluye.</small></span></label>
     <button class="btn btn--primario" id="btn-cargar">Cargar a Firebase</button>
+  </section>
+
+  <h2>Carga masiva de despachos</h2>
+  <div class="panel">
+    <p style="margin-top:0">Para registrar muchos despachos de una vez. Descarga la plantilla, llénala (una fila por despacho) y elígela aquí.</p>
+    <button class="btn" id="btn-plantilla-desp">Descargar plantilla de despachos</button>
+  </div>
+  <label class="archivo">Elige el Excel de despachos
+    <input type="file" id="archivo-desp" accept=".xlsx,.xls,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel">
+  </label>
+  <div id="msg-desp"></div>
+  <section id="revision-desp" class="oculto">
+    <div class="cifras">
+      <div><strong id="d-validos">0</strong><span>despachos listos</span></div>
+      <div><strong id="d-repetidos">0</strong><span>ya estaban cargados</span></div>
+      <div><strong id="d-sinmat">0</strong><span>código no está en la lista</span></div>
+    </div>
+    <div class="muestra panel" id="muestra-desp"></div>
+    <label class="opcion"><input type="radio" name="modo-desp" value="registro" checked>
+      <span><b>Solo registrar, sin tocar el stock</b><small>Para despachos que el stock actual ya descontó (por ejemplo, anteriores a la lista inicial).</small></span></label>
+    <label class="opcion"><input type="radio" name="modo-desp" value="descontar">
+      <span><b>Registrar y descontar del stock actual</b><small>Para salidas nuevas que todavía no se restaron. Los códigos que no están en la lista se omiten.</small></span></label>
+    <button class="btn btn--primario" id="btn-cargar-desp">Cargar despachos</button>
   </section>
 
   <h2>Carga masiva de materiales nuevos</h2>
@@ -53,8 +76,8 @@
   </div>
 </main>
 <script type="module">
-  import { exigirSesion, nombreUsuario, escucharMateriales, cargaInicial, agregarNuevos } from "./datos.js";
-  import { leerExcel, descargarPlantilla } from "./excel.js";
+  import { exigirSesion, nombreUsuario, escucharMateriales, escucharDespachos, cargaInicial, agregarNuevos, cargarDespachos, claveDespacho } from "./datos.js";
+  import { leerExcel, descargarPlantilla, leerDespachos, descargarPlantillaDespachos, fmtFecha } from "./excel.js";
 
   const $ = (s) => document.querySelector(s);
   const esc = (v) => String(v ?? "-").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -150,6 +173,76 @@
       btn.disabled = false;
     }
   });
+
+  // ---------------- despachos masivos
+  const docsDesp = new Map(); // documento -> claves de sus despachos
+  escucharDespachos((cambios) => {
+    for (const { tipo, id, data } of cambios) {
+      if (tipo === "removed") docsDesp.delete(id);
+      else docsDesp.set(id, (data.items || []).map(claveDespacho));
+    }
+    if (despLeido) resumirDesp();
+  });
+  const clavesExistentes = () => { const s = new Set(); docsDesp.forEach((l) => l.forEach((k) => s.add(k))); return s; };
+  let despLeido = null, despPorCargar = [];
+  const avisoDesp = (tipo, html) => { $("#msg-desp").innerHTML = `<div class="aviso aviso--${tipo}" role="status">${html}</div>`; };
+
+  function resumirDesp() {
+    const ya = clavesExistentes();
+    const descontar = document.querySelector("input[name=modo-desp]:checked").value === "descontar";
+    const nuevos = despLeido.filas.filter((f) => !ya.has(claveDespacho(f)));
+    const sinMat = nuevos.filter((f) => !existentes.has(f.codigo));
+    despPorCargar = descontar ? nuevos.filter((f) => existentes.has(f.codigo)) : nuevos;
+    $("#d-validos").textContent = despPorCargar.length;
+    $("#d-repetidos").textContent = despLeido.filas.length - nuevos.length;
+    $("#d-sinmat").textContent = sinMat.length;
+    const cols = ["codigo", "fecha", "vale", "cantidad", "um", "responsable"];
+    $("#muestra-desp").innerHTML = `<table><tr>${["Codigo", "Fecha", "Vale", "Cantidad", "UM", "Despachador"].map((t) => `<th>${t}</th>`).join("")}</tr>${
+      despPorCargar.slice(0, 5).map((f) => `<tr>${cols.map((c) => `<td>${esc(c === "fecha" ? fmtFecha(f.fecha) : f[c])}</td>`).join("")}</tr>`).join("")}</table>`;
+    let txt = `Hoja leída: <b>${esc(despLeido.hoja)}</b>.`;
+    if (sinMat.length) txt += ` Códigos que no están en la lista: ${esc([...new Set(sinMat.map((f) => f.codigo))].slice(0, 15).join(", "))}${sinMat.length > 15 ? "…" : ""}.`;
+    if (despLeido.errores.length) txt += `<br>Filas con problemas (no se cargan):<br>${despLeido.errores.slice(0, 10).map(esc).join("<br>")}${despLeido.errores.length > 10 ? `<br>y ${despLeido.errores.length - 10} más.` : ""}`;
+    avisoDesp(despLeido.errores.length ? "alerta" : "ok", txt);
+  }
+  document.querySelectorAll("input[name=modo-desp]").forEach((r) => r.addEventListener("change", () => despLeido && resumirDesp()));
+
+  $("#archivo-desp").addEventListener("change", async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    $("#revision-desp").classList.add("oculto");
+    avisoDesp("alerta", "Leyendo el archivo…");
+    try {
+      despLeido = await leerDespachos(f);
+      if (!despLeido.filas.length && !despLeido.errores.length) throw new Error("El archivo no tiene despachos.");
+      $("#revision-desp").classList.remove("oculto");
+      resumirDesp();
+    } catch (err) {
+      despLeido = null;
+      avisoDesp("error", esc(err.message));
+    }
+  });
+
+  $("#btn-cargar-desp").addEventListener("click", async () => {
+    if (!despLeido) return;
+    if (!baseLista) return avisoDesp("error", "Todavía no se pudo revisar la base. Espera a que diga “En línea”.");
+    if (!despPorCargar.length) return avisoDesp("alerta", "No hay despachos nuevos para cargar.");
+    const descontar = document.querySelector("input[name=modo-desp]:checked").value === "descontar";
+    if (descontar && !confirm(`Se van a descontar ${despPorCargar.length} despachos del stock actual. ¿Continuar?`)) return;
+    const btn = $("#btn-cargar-desp");
+    btn.disabled = true;
+    try {
+      const r = await cargarDespachos(despPorCargar, existentes, descontar, (t) => avisoDesp("alerta", esc(t)));
+      avisoDesp("ok", `Listo: ${r.cargados} despachos cargados${descontar ? " y descontados del stock" : ""}. <a href="despacho.html">Ver en Despacho</a>`);
+      $("#revision-desp").classList.add("oculto");
+      $("#archivo-desp").value = "";
+      despLeido = null;
+    } catch (err) {
+      avisoDesp("error", "No se completó la carga: " + esc(err.code === "permission-denied" ? "sin permiso (revisa las reglas de Firestore)." : err.message));
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  $("#btn-plantilla-desp").addEventListener("click", () => descargarPlantillaDespachos().catch((e) => avisoDesp("error", esc(e.message))));
 
   $("#btn-plantilla").addEventListener("click", () => descargarPlantilla().catch((e) => aviso("error", esc(e.message))));
 </script>

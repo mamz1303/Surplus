@@ -41,12 +41,21 @@ La contraseña no está escrita en ningún archivo: la valida Firebase. Los dato
 1. Ten el Excel en la tablet (Descargas o Google Drive).
 2. Abre la página, ingresa con `cvalmacen3` y toca **Cargar datos desde Excel**.
 3. Elige el archivo. La página muestra cuántos materiales y despachos históricos encontró, con una muestra.
-4. Elige **Carga inicial**, deja marcado *Incluir historial* y toca **Cargar a Firebase**. Toma menos de un minuto.
+4. Elige **Carga inicial** y toca **Cargar a Firebase**. Marca *Incluir historial* solo si quieres los despachos antiguos del Excel. Toma menos de un minuto.
 
 Qué se carga:
 
 - Lista oficial desde la hoja `STOCK`, con **SALDO** como stock actual (la columna STOCK se ignora): 3063 materiales.
 - Historial de la hoja `DESCARGAR DESPACHO` (999 registros) como *histórico*. No vuelve a descontar stock porque SALDO ya lo incluye.
+
+### Carga masiva de despachos
+
+En *Cargar datos* toca **Descargar plantilla de despachos** (hoja `DESPACHOS`). Obligatorios: CODIGO, FECHA (dd/mm/aaaa) y CANTIDAD; lo demás del material se completa desde la lista oficial. Al subirla eliges:
+
+- **Solo registrar, sin tocar el stock**: para salidas que el stock ya descontó.
+- **Registrar y descontar del stock actual**: para salidas que todavía no se restaron (se aplican en orden de fecha).
+
+La página muestra antes cuántos están listos, cuáles ya estaban cargados (no se duplican si subes el mismo archivo dos veces), qué códigos no existen y qué filas tienen errores.
 
 ### Carga masiva de materiales nuevos (después)
 

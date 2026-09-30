@@ -302,3 +302,86 @@ export async function agregarNuevos(materiales, existentes, progreso = () => {})
   }
   return { agregados: nuevos.length, omitidos: materiales.length - nuevos.length };
 }
+
+// ------------------------------------------------------------ carga masiva de despachos
+/** Clave para detectar un despacho ya cargado (mismo código, fecha, vale, cantidad y despachador). */
+export const claveDespacho = (d) =>
+  [d.codigo, (d.fecha || "").slice(0, 10), d.vale, r4(d.cantidad || 0), (d.responsable || "").toUpperCase()].join("|");
+
+/** Completa los datos del material (descripción, ubicación, UM) desde la lista oficial si vienen vacíos. */
+function completar(fila, m) {
+  const r = { ...fila };
+  if (m) for (const k of ["item_code", "descripcion", "storage_location", "storage_section", "location", "um"]) {
+    if (r[k] === null || r[k] === undefined) r[k] = m[k] ?? null;
+  }
+  return r;
+}
+
+/** Registra despachos en bloque.
+ *  descontar=false: solo quedan en la lista de despachos (el stock ya los incluye).
+ *  descontar=true : además restan del stock actual de cada material, en orden de fecha.
+ *  materiales: Map codigo -> material (con _b). */
+export async function cargarDespachos(filas, materiales, descontar, progreso = () => {}) {
+  requiereFirebase();
+  const ordenadas = [...filas].sort((a, b) => (a.fecha || "").localeCompare(b.fecha || ""));
+  const sinMaterial = ordenadas.filter((f) => !materiales.has(f.codigo));
+
+  if (!descontar) {
+    const porAnio = {};
+    ordenadas.forEach((f) => {
+      const d = sinIndefinidos({
+        ...completar(f, materiales.get(f.codigo)), id: nuevoId() + Math.random().toString(36).slice(2, 5),
+        tipo: "HISTORICO", stock_antes: null, stock_despues: null, origen: "carga masiva",
+      });
+      const k = "hist-" + d.fecha.slice(0, 4);
+      (porAnio[k] = porAnio[k] || []).push(d);
+    });
+    const entradas = Object.entries(porAnio);
+    for (let i = 0; i < entradas.length; i++) {
+      const [id, items] = entradas[i];
+      const batch = writeBatch(db);
+      batch.set(doc(db, "despachos", id), { items: arrayUnion(...items) }, { merge: true });
+      await batch.commit();
+      progreso(`Guardando ${i + 1} de ${entradas.length}`);
+    }
+    return { cargados: ordenadas.length, omitidos: [] };
+  }
+
+  // Descontando stock: una transacción por bloque de materiales.
+  const validas = ordenadas.filter((f) => materiales.has(f.codigo));
+  const porBloque = {};
+  validas.forEach((f) => { const b = materiales.get(f.codigo)._b; (porBloque[b] = porBloque[b] || []).push(f); });
+  const entradas = Object.entries(porBloque);
+  let cargados = 0;
+  for (let i = 0; i < entradas.length; i++) {
+    const [bloque, lista] = entradas[i];
+    const refB = doc(db, "materiales", bloque);
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(refB);
+      const actuales = { ...(snap.exists() ? snap.data().m || {} : {}) };
+      const porMes = {};
+      const tocados = new Set();
+      for (const f of lista) {
+        const m = actuales[f.codigo];
+        if (!m) continue;
+        const antes = r4(m.stock || 0), despues = r4(antes - f.cantidad);
+        actuales[f.codigo] = { ...m, stock: despues };
+        tocados.add(f.codigo);
+        const d = sinIndefinidos({
+          ...completar(f, m), id: nuevoId() + Math.random().toString(36).slice(2, 5), tipo: "DESPACHO",
+          stock_antes: antes, stock_despues: despues, origen: "carga masiva",
+        });
+        (porMes[d.fecha.slice(0, 7)] = porMes[d.fecha.slice(0, 7)] || []).push(d);
+      }
+      const args = [];
+      tocados.forEach((c) => args.push(new FieldPath("m", c), sinIndefinidos(actuales[c])));
+      if (args.length) tx.update(refB, ...args);
+      for (const [mes, items] of Object.entries(porMes)) {
+        tx.set(doc(db, "despachos", mes), { items: arrayUnion(...items) }, { merge: true });
+      }
+    });
+    cargados += lista.length;
+    progreso(`Descontando stock: grupo ${i + 1} de ${entradas.length}`);
+  }
+  return { cargados, omitidos: sinMaterial };
+}

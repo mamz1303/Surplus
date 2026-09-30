@@ -130,6 +130,69 @@ export async function leerExcel(archivo) {
   return { materiales, historial, repetidos, hoja };
 }
 
+// ------------------------------------------------------------ lectura de despachos (carga masiva)
+const ALIAS_DESP = {
+  codigo: ["CODIGO", "CÓDIGO", "TEMP_CODE", "TEMP CODE"],
+  item_code: ["ITEM_CODE", "ITEM CODE"],
+  descripcion: ["DESCRIPTION", "DESCRIPCION", "DESCRIPCIÓN"],
+  storage_location: ["STORAGE LOCATION", "STORAGEE LOCATION", "STORAGE_LOCATION", "STORAGE_TYPE"],
+  storage_section: ["STORAGE SECTION", "STORAGE_SECTION", "SECTION"],
+  location: ["LOCATION"],
+  fecha: ["FECHA"],
+  vale: ["VALE MANUAL", "VALE"],
+  cantidad: ["CANTIDAD"],
+  um: ["UM", "UND"],
+  responsable: ["DESPACHADOR"],
+  comentario: ["COMENTARIO", "OBSERVACIONES", "DATOS ADICIONALES / OBSERVACIONES"],
+};
+
+/** Lee una plantilla de despachos. Devuelve { filas, errores, hoja }. */
+export async function leerDespachos(archivo) {
+  const X = await xlsx();
+  const wb = X.read(await archivo.arrayBuffer(), { type: "array", cellDates: true });
+  const nombres = wb.SheetNames.includes("DESPACHOS") ? ["DESPACHOS", ...wb.SheetNames.filter((n) => n !== "DESPACHOS")] : wb.SheetNames;
+  for (const hoja of nombres) {
+    if (hoja === "Instrucciones") continue;
+    const filas = X.utils.sheet_to_json(wb.Sheets[hoja], { header: 1, raw: true, defval: null });
+    const fe = filas.slice(0, 20).findIndex((f) => {
+      const n = f.map(norm);
+      return n.some((c) => ALIAS_DESP.codigo.includes(c)) && n.includes("CANTIDAD");
+    });
+    if (fe < 0) continue;
+    const enc = filas[fe].map(norm);
+    const idx = {};
+    for (const [k, al] of Object.entries(ALIAS_DESP)) {
+      idx[k] = k === "fecha" ? enc.findIndex((c) => c.startsWith("FECHA")) : enc.findIndex((c) => al.includes(c));
+    }
+    const col = (f, k) => (idx[k] >= 0 ? f[idx[k]] : null);
+    const out = [], errores = [];
+    filas.slice(fe + 1).forEach((f, i) => {
+      const nFila = fe + i + 2; // número de fila como se ve en Excel
+      const codigo = limpiar(col(f, "codigo"));
+      const cantRaw = col(f, "cantidad");
+      if (!codigo && !limpiar(cantRaw) && !limpiar(col(f, "fecha"))) return; // fila vacía
+      const cantidad = aNumero(cantRaw);
+      const fecha = fechaHistorica(col(f, "fecha"));
+      const prob = [];
+      if (!codigo) prob.push("falta el código");
+      if (!(cantidad > 0)) prob.push("cantidad inválida");
+      if (!fecha) prob.push("fecha inválida (usa dd/mm/aaaa)");
+      if (prob.length) { errores.push(`Fila ${nFila}: ${prob.join(", ")}`); return; }
+      out.push({
+        codigo, fecha, cantidad,
+        item_code: limpiar(col(f, "item_code")), descripcion: limpiar(col(f, "descripcion")),
+        storage_location: limpiar(col(f, "storage_location")), storage_section: limpiar(col(f, "storage_section")),
+        location: limpiar(col(f, "location")), um: limpiar(col(f, "um")),
+        vale: normalizarVale(col(f, "vale"), false),
+        responsable: (limpiar(col(f, "responsable")) || "").toUpperCase() || null,
+        comentario: limpiar(col(f, "comentario")),
+      });
+    });
+    return { filas: out, errores, hoja };
+  }
+  throw new Error("No encontré una hoja con las columnas CODIGO y CANTIDAD. Usa la plantilla de despachos.");
+}
+
 // ------------------------------------------------------------ exportes
 export const COLS = {
   materiales: [
@@ -262,4 +325,25 @@ export async function descargarPlantilla() {
   X.utils.book_append_sheet(wb, ws, "STOCK");
   X.utils.book_append_sheet(wb, ayuda, "Instrucciones");
   X.writeFile(wb, "plantilla_materiales_nuevos.xlsx");
+}
+
+/** Plantilla vacía para la carga masiva de despachos. */
+export async function descargarPlantillaDespachos() {
+  const X = await xlsx();
+  const cab = ["CODIGO", "ITEM_CODE", "DESCRIPTION", "STORAGE LOCATION", "STORAGE SECTION", "LOCATION", "FECHA", "VALE MANUAL", "CANTIDAD", "UM", "DESPACHADOR", "COMENTARIO"];
+  const ws = X.utils.aoa_to_sheet([cab]);
+  ws["!cols"] = [11, 16, 40, 16, 16, 10, 12, 12, 10, 7, 15, 36].map((w) => ({ wch: w }));
+  const ayuda = X.utils.aoa_to_sheet([
+    ["Cómo llenar la hoja DESPACHOS"],
+    ["Obligatorios: CODIGO, FECHA (dd/mm/aaaa) y CANTIDAD. VALE MANUAL con formato nn-año (ej. 15-2024)."],
+    ["ITEM_CODE, DESCRIPTION, ubicaciones y UM pueden quedar vacíos: se completan desde la lista oficial."],
+    ["Ejemplo:"],
+    cab,
+    ["CT86", "", "", "", "", "", "01/10/2026", "15-2026", 10, "M", "JCHECASACA", "Se despacha 01 carrete(s)"],
+  ]);
+  ayuda["!cols"] = [{ wch: 11 }];
+  const wb = X.utils.book_new();
+  X.utils.book_append_sheet(wb, ws, "DESPACHOS");
+  X.utils.book_append_sheet(wb, ayuda, "Instrucciones");
+  X.writeFile(wb, "plantilla_despachos.xlsx");
 }
