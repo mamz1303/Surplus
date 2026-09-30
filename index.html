@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1d2630">
+<title>Surplus Patio Komatsu</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<main class="login">
+  <h1>Surplus Patio Komatsu</h1>
+  <p id="bajada">Inventario y despacho de materiales.</p>
+
+  <div id="cargando" class="vacio">Cargando…</div>
+
+  <form id="form-login" class="oculto" novalidate>
+    <div id="msg"></div>
+    <label class="campo"><span>Usuario</span>
+      <input name="usuario" autocomplete="username" autocapitalize="none" spellcheck="false" required></label>
+    <label class="campo"><span>Contraseña</span>
+      <input name="clave" type="password" autocomplete="current-password" required></label>
+    <button class="btn btn--primario" type="submit">Ingresar</button>
+  </form>
+
+  <div id="menu" class="menu-roles oculto">
+    <a class="rol" href="despacho.html" style="--c: var(--cobre)"><strong>Despacho</strong><span>Registrar salidas de material con vale manual y ver los despachos.</span></a>
+    <a class="rol" href="inventario.html" style="--c: var(--verdin)"><strong>Inventario</strong><span>Registrar el conteo físico y corregir ubicación o descripción.</span></a>
+    <a class="enlace-secundario" href="cargar.html">Cargar datos desde Excel</a>
+    <button class="btn salir" id="salir">Cerrar sesión</button>
+  </div>
+</main>
+<script type="module">
+  import { configurado, iniciarSesion, alCambiarSesion, cerrarSesion, nombreUsuario } from "./datos.js";
+
+  const $ = (s) => document.querySelector(s);
+  const form = $("#form-login");
+
+  if (!configurado) {
+    $("#cargando").textContent = "Falta pegar la configuración de Firebase en config.js.";
+  }
+
+  alCambiarSesion((u) => {
+    if (!configurado) return;
+    $("#cargando").classList.add("oculto");
+    form.classList.toggle("oculto", !!u);
+    $("#menu").classList.toggle("oculto", !u);
+    $("#bajada").textContent = u ? `Sesión: ${nombreUsuario(u)}. Elige la pantalla.` : "Inventario y despacho de materiales.";
+    if (!u) setTimeout(() => form.usuario.focus(), 50);
+  });
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = form.querySelector("button");
+    btn.disabled = true;
+    $("#msg").innerHTML = "";
+    try {
+      await iniciarSesion(form.usuario.value, form.clave.value);
+      form.clave.value = "";
+    } catch (err) {
+      $("#msg").innerHTML = `<div class="aviso aviso--error" role="alert"></div>`;
+      $("#msg .aviso").textContent = err.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  $("#salir").addEventListener("click", cerrarSesion);
+</script>
+</body>
+</html>

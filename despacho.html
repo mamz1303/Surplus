@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1d2630">
+<title>Despacho | Surplus Patio Komatsu</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body data-rol="despacho">
+<header class="cabecera">
+  <div class="cabecera__fila">
+    <div>
+      <h1>Despacho</h1>
+      <div class="cabecera__rol"><a href="index.html">Menú</a>, <span id="usuario"></span></div>
+    </div>
+    <div class="cabecera__sync" id="sync" aria-live="polite">Conectando…</div>
+    <button class="btn btn--chico btn--salir" id="btn-salir">Salir</button>
+  </div>
+  <nav class="pestanas" role="tablist">
+    <button class="pestana" role="tab" data-vista="materiales" aria-selected="true">Materiales</button>
+    <button class="pestana" role="tab" data-vista="despachos" aria-selected="false">Despachos</button>
+  </nav>
+</header>
+<main class="contenedor">
+  <div class="herramientas">
+    <input id="buscador" class="buscador" type="search" autocomplete="off" aria-label="Buscar">
+    <div class="acciones">
+      <button class="btn" id="btn-ordenar">Ordenar</button>
+      <div class="menu">
+        <button class="btn" id="btn-exportar" aria-haspopup="true">Exportar</button>
+        <div class="menu__lista oculto" id="menu-exportar" role="menu">
+          <button data-fmt="xlsx" role="menuitem">Excel (.xlsx)</button>
+          <button data-fmt="pdf" role="menuitem">PDF para imprimir</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="filtros" id="filtros"></div>
+  <div class="resumen"><span id="resumen-texto"></span><span class="orden-actual" id="orden-actual"></span></div>
+  <div class="progreso" id="progreso"><span></span></div>
+  <div class="lista" id="lista"></div>
+  <p class="vacio oculto" id="vacio"></p>
+  <div class="centinela" id="centinela"></div>
+</main>
+<dialog class="hoja" id="hoja"></dialog>
+<script type="module" src="app.js"></script>
+</body>
+</html>

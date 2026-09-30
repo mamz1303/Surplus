@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1d2630">
+<title>Cargar datos | Surplus Patio Komatsu</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="cabecera">
+  <div class="cabecera__fila">
+    <div>
+      <h1>Cargar datos</h1>
+      <div class="cabecera__rol"><a href="index.html">Menú</a>, <span id="usuario"></span></div>
+    </div>
+    <div class="cabecera__sync" id="sync">Conectando…</div>
+  </div>
+</header>
+<main class="carga">
+  <div class="panel">
+    <strong id="estado-base">Revisando la base de datos…</strong>
+  </div>
+
+  <label class="archivo">Elige el Excel desde la tablet
+    <input type="file" id="archivo" accept=".xlsx,.xls,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel">
+  </label>
+  <div id="msg"></div>
+
+  <section id="revision" class="oculto">
+    <h2>Lo que encontré en el archivo</h2>
+    <div class="cifras">
+      <div><strong id="n-mat">0</strong><span>materiales</span></div>
+      <div><strong id="n-nuevos">0</strong><span>no están en el sistema</span></div>
+      <div><strong id="n-hist">0</strong><span>despachos históricos</span></div>
+    </div>
+    <div class="muestra panel" id="muestra"></div>
+
+    <h2>Qué hacer</h2>
+    <label class="opcion"><input type="radio" name="modo" value="nuevos">
+      <span><b>Agregar solo materiales nuevos</b><small>Los códigos que ya existen no se tocan: se conserva su stock, ubicación y conteo.</small></span></label>
+    <label class="opcion"><input type="radio" name="modo" value="inicial">
+      <span><b>Carga inicial: borrar todo y cargar este archivo</b><small>Borra materiales, despachos y conteos registrados en la app. Úsalo solo la primera vez.</small></span></label>
+    <label class="opcion" id="op-hist"><input type="checkbox" id="con-historial" checked>
+      <span><b>Incluir historial de despachos</b><small>Hoja DESCARGAR DESPACHO. Queda como registro; no vuelve a descontar stock porque SALDO ya lo incluye.</small></span></label>
+    <button class="btn btn--primario" id="btn-cargar">Cargar a Firebase</button>
+  </section>
+
+  <h2>Carga masiva de materiales nuevos</h2>
+  <div class="panel">
+    <p style="margin-top:0">Descarga la plantilla, llénala en Excel (o Google Sheets en la tablet), guárdala como .xlsx y elígela arriba con la opción <i>Agregar solo materiales nuevos</i>.</p>
+    <button class="btn" id="btn-plantilla">Descargar plantilla</button>
+  </div>
+</main>
+<script type="module">
+  import { exigirSesion, nombreUsuario, escucharMateriales, cargaInicial, agregarNuevos } from "./datos.js";
+  import { leerExcel, descargarPlantilla } from "./excel.js";
+
+  const $ = (s) => document.querySelector(s);
+  const esc = (v) => String(v ?? "-").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const existentes = new Map();
+  let leido = null, baseLista = false;
+
+  function aviso(tipo, html) { $("#msg").innerHTML = `<div class="aviso aviso--${tipo}" role="status">${html}</div>`; }
+
+  const u = await exigirSesion();
+  $("#usuario").textContent = nombreUsuario(u);
+
+  escucharMateriales((cambios) => {
+    for (const { tipo, id, data } of cambios) {
+      existentes.forEach((m, k) => { if (m._b === id) existentes.delete(k); });
+      if (tipo !== "removed") for (const [c, m] of Object.entries(data.m || {})) existentes.set(c, { ...m, _b: id });
+    }
+    pintarBase();
+  }, ({ cache, error }) => {
+    $("#sync").textContent = error ? "Error de conexión" : cache ? "Sin señal" : "En línea";
+    if (!cache && !error) { baseLista = true; pintarBase(); }
+  });
+
+  function pintarBase() {
+    $("#estado-base").textContent = !baseLista ? "Revisando la base de datos…"
+      : existentes.size ? `La base tiene ${existentes.size.toLocaleString("es-PE")} materiales.`
+      : "La base está vacía. Usa la carga inicial.";
+    if (leido) resumir();
+  }
+
+  function resumir() {
+    const nuevos = leido.materiales.filter((m) => !existentes.has(m.codigo)).length;
+    $("#n-mat").textContent = leido.materiales.length.toLocaleString("es-PE");
+    $("#n-nuevos").textContent = nuevos.toLocaleString("es-PE");
+    $("#n-hist").textContent = leido.historial.length.toLocaleString("es-PE");
+    const modo = document.querySelector("input[name=modo]:checked");
+    if (!modo) document.querySelector(`input[name=modo][value=${existentes.size ? "nuevos" : "inicial"}]`).checked = true;
+    actualizarOpciones();
+  }
+
+  function actualizarOpciones() {
+    const inicial = document.querySelector("input[name=modo]:checked")?.value === "inicial";
+    $("#op-hist").classList.toggle("oculto", !inicial || !leido?.historial.length);
+  }
+  document.querySelectorAll("input[name=modo]").forEach((r) => r.addEventListener("change", actualizarOpciones));
+
+  $("#archivo").addEventListener("change", async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    $("#revision").classList.add("oculto");
+    aviso("alerta", "Leyendo el archivo…");
+    try {
+      leido = await leerExcel(f);
+      if (!leido.materiales.length) throw new Error("El archivo no tiene materiales con código.");
+      const cols = ["codigo", "item_code", "descripcion", "storage_location", "storage_section", "location", "um", "stock"];
+      $("#muestra").innerHTML = `<table><tr>${["Codigo", "Item_Code", "Description", "S. Location", "S. Section", "Location", "UM", "Stock"].map((t) => `<th>${t}</th>`).join("")}</tr>${
+        leido.materiales.slice(0, 5).map((m) => `<tr>${cols.map((c) => `<td>${esc(m[c])}</td>`).join("")}</tr>`).join("")}</table>`;
+      aviso("ok", `Hoja leída: <b>${esc(leido.hoja)}</b>.` + (leido.repetidos.length ? ` Códigos repetidos omitidos: ${esc(leido.repetidos.join(", "))}.` : ""));
+      $("#revision").classList.remove("oculto");
+      resumir();
+    } catch (err) {
+      leido = null;
+      aviso("error", esc(err.message));
+    }
+  });
+
+  $("#btn-cargar").addEventListener("click", async () => {
+    if (!leido) return;
+    if (!baseLista) return aviso("error", "Todavía no se pudo revisar la base. Espera a que diga “En línea”.");
+    const modo = document.querySelector("input[name=modo]:checked").value;
+    if (modo === "inicial" && existentes.size) {
+      const r = prompt(`Esto borra los ${existentes.size} materiales actuales, sus conteos y los despachos registrados. Escribe BORRAR para continuar.`);
+      if ((r || "").trim().toUpperCase() !== "BORRAR") return aviso("alerta", "Carga cancelada. No se modificó nada.");
+    }
+    const btn = $("#btn-cargar");
+    btn.disabled = true;
+    try {
+      if (modo === "inicial") {
+        const hist = $("#con-historial").checked ? leido.historial : [];
+        const r = await cargaInicial(leido.materiales, hist, (t) => aviso("alerta", esc(t)));
+        aviso("ok", `Listo: ${r.materiales.toLocaleString("es-PE")} materiales en ${r.bloques} bloques y ${r.historial} despachos históricos. <a href="index.html">Ir al menú</a>`);
+      } else {
+        const r = await agregarNuevos(leido.materiales, existentes, (t) => aviso("alerta", esc(t)));
+        aviso("ok", r.agregados
+          ? `Listo: se agregaron ${r.agregados} materiales nuevos (${r.omitidos} ya existían y no se tocaron). <a href="index.html">Ir al menú</a>`
+          : "No había materiales nuevos: todos los códigos del archivo ya existen.");
+      }
+      $("#revision").classList.add("oculto");
+      $("#archivo").value = "";
+      leido = null;
+    } catch (err) {
+      aviso("error", "No se completó la carga: " + esc(err.code === "permission-denied" ? "sin permiso (revisa las reglas de Firestore)." : err.message));
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  $("#btn-plantilla").addEventListener("click", () => descargarPlantilla().catch((e) => aviso("error", esc(e.message))));
+</script>
+</body>
+</html>
